@@ -1,0 +1,23 @@
+@use "../../styles/colors" as *;
+@use "./Adaptations";
+
+:host { all: initial; }
+.chat-widget {
+	position: fixed;
+	right: 20px;
+	bottom: max(24px, env(safe-area-inset-bottom));
+	z-index: 2147483000;
+	font: 16px/1.5 Arial, sans-serif;
+	color: $ink;
+	&[hidden], [hidden] { display: none; }
+	button { border: 0; cursor: pointer; color: $white; background: $ink; }
+	button:focus-visible { outline: 3px solid $ink; outline-offset: 3px; }
+	.launcher { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; }
+	.launcher[hidden] { display: none; }
+	section { width: min(380px, calc(100vw - 40px)); height: min(600px, calc(100dvh - 48px)); background: $paper; border-radius: 18px; overflow: hidden; box-shadow: 0 8px 40px rgba($ink, .2); }
+	header { display: flex; align-items: center; justify-content: space-between; background: $ink; color: $white; padding: 12px 18px; }
+	.close { font-size: 28px; width: 44px; height: 44px; border-radius: 50%; }
+	.close:focus-visible { outline-color: $white; }
+	.conversation { padding: 20px; }
+	p { margin: 0; background: $white; border-radius: 12px; padding: 12px 16px; }
+}
