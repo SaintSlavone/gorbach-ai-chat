@@ -2,6 +2,7 @@ declare const WIDGET_CSS: string;
 
 type ConversationScreen = {
 	messages: { role: string; text: string }[];
+	lead_id?: string;
 	question?: string;
 	chips?: { id: string; label: string }[];
 	multi?: boolean;
@@ -122,7 +123,7 @@ function mountWidget(api: URL) {
 		});
 		const data = await response.json();
 		if (!response.ok) {
-			if (response.status === 404 && data.error === "unknown_session")
+			if (route !== "submit" && response.status === 404 && data.error === "unknown_session")
 				throw new Error("unknown_session");
 			throw new Error(data.error === "invalid_contact" ? "invalid_contact" : "request_failed");
 		}
@@ -141,7 +142,20 @@ function mountWidget(api: URL) {
 		render(await request("msg", { sid, ...payload }), false);
 	}
 
+	function renderReceipt(leadId: string) {
+		const receipt = document.createElement("p");
+		receipt.setAttribute("role", "status");
+		receipt.textContent = `${copy.receipt}: ${leadId}`;
+		survey.replaceChildren(receipt);
+		form.hidden = true;
+		list.scrollTop = list.scrollHeight;
+	}
+
 	function renderSurvey(screen: ConversationScreen) {
+		if (screen.lead_id) {
+			renderReceipt(screen.lead_id);
+			return;
+		}
 		survey.replaceChildren();
 		input.placeholder = screen.input === "phone" ? copy.contact : inputLabel;
 		input.setAttribute("aria-label", input.placeholder);
@@ -196,11 +210,8 @@ function mountWidget(api: URL) {
 		if (screen.review) {
 			survey.append(button(copy.submit, () => void run(async () => {
 				const { lead_id } = await request("submit", { sid });
-				const receipt = document.createElement("p");
-				receipt.setAttribute("role", "status");
-				receipt.textContent = `${copy.receipt}: ${lead_id}`;
-				survey.replaceChildren(receipt);
-				list.scrollTop = list.scrollHeight;
+				if (typeof lead_id !== "string" || !lead_id) throw new Error("missing_lead_id");
+				renderReceipt(lead_id);
 			})));
 		}
 	}
@@ -270,6 +281,7 @@ function mountWidget(api: URL) {
 		}
 		void run(async () => {
 			if (!ready) await restore();
+			if (form.hidden) return;
 			await answer({ text });
 			input.value = "";
 			input.focus();
