@@ -13,6 +13,7 @@ type ConversationScreen = {
 			product: string;
 			title: string;
 			questionLabels: Record<string, string>;
+			answerLabels?: Record<string, string | string[]>;
 			answers: Record<string, string | string[]>;
 			notes?: string;
 		}[];
@@ -174,7 +175,8 @@ function mountWidget(api: URL) {
 					const term = document.createElement("dt");
 					const detail = document.createElement("dd");
 					term.textContent = item.questionLabels?.[field] ?? field;
-					detail.textContent = Array.isArray(value) ? value.join(", ") : value;
+					const answer = item.answerLabels?.[field] ?? value;
+					detail.textContent = Array.isArray(answer) ? answer.join(", ") : answer;
 					answers.append(term, detail);
 				}
 				survey.append(title, answers);
