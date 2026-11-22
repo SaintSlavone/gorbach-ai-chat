@@ -1,6 +1,9 @@
 declare const WIDGET_CSS: string;
 
 type ConversationScreen = {
+	attachmentField?: { id: string; type: "file" | "text+file" } | null;
+	attachmentRecovery?: { product: string; field: string };
+	attachmentAnswers?: { product: string; fields: Record<string, string[]> }[];
 	messages: { role: string; text: string }[];
 	lead_id?: string;
 	question?: string;
@@ -29,6 +32,14 @@ const surveyLabels = {
 	en: { confirm: "Confirm choices", step: "Step", contact: "Phone or email", submit: "Submit enquiry", receipt: "Enquiry number", invalidContact: "Enter a valid phone number or email address." },
 	ru: { confirm: "Подтвердить выбор", step: "Шаг", contact: "Телефон или эл. почта", submit: "Отправить заявку", receipt: "Номер заявки", invalidContact: "Введите действительный номер телефона или адрес электронной почты." },
 	uk: { confirm: "Підтвердити вибір", step: "Крок", contact: "Телефон або ел. пошта", submit: "Надіслати заявку", receipt: "Номер заявки", invalidContact: "Введіть дійсний номер телефону або адресу електронної пошти." },
+};
+
+const attachmentLabels: Record<string, string[]> = {
+	cs: ["Přiložit soubor", "Nahrávání…", "Potvrdit přílohy", "Nahraďte přílohu, jejíž platnost vypršela.", "Nepodporovaný typ souboru.", "Soubor je příliš velký.", "Příliš mnoho příloh.", "Překročen celkový limit velikosti.", "Vyberte platnou přílohu.", "Přílohy"],
+	en: ["Attach file", "Uploading…", "Confirm attachments", "Replace the expired attachment.", "Unsupported file type.", "The file is too large.", "Too many attachments.", "The total upload size limit was reached.", "Select a valid attachment.", "Attachments"],
+	de: ["Datei anhängen", "Wird hochgeladen…", "Anhänge bestätigen", "Ersetzen Sie den abgelaufenen Anhang.", "Nicht unterstützter Dateityp.", "Die Datei ist zu groß.", "Zu viele Anhänge.", "Die Gesamtgröße wurde überschritten.", "Wählen Sie einen gültigen Anhang.", "Anhänge"],
+	ru: ["Прикрепить файл", "Загрузка…", "Подтвердить вложения", "Замените просроченное вложение.", "Тип файла не поддерживается.", "Файл слишком большой.", "Слишком много вложений.", "Превышен общий размер вложений.", "Выберите действительное вложение.", "Вложения"],
+	uk: ["Прикріпити файл", "Завантаження…", "Підтвердити вкладення", "Замініть прострочене вкладення.", "Тип файлу не підтримується.", "Файл завеликий.", "Забагато вкладень.", "Перевищено загальний розмір вкладень.", "Виберіть дійсне вкладення.", "Вкладення"],
 };
 
 const script = document.currentScript as HTMLScriptElement | null;
@@ -101,32 +112,43 @@ function mountWidget(api: URL) {
 	input.setAttribute("aria-label", inputLabel);
 	send.textContent = sendLabel;
 	reset.textContent = resetLabel;
+	let attachmentField: ConversationScreen["attachmentField"];
+	let uploaded: {id: string; name: string}[] = [];
+	const names: Record<string, string> = Object.create(null);
+	const [attach, uploading, confirmFiles, recovery, typeError, sizeError, countError, totalError, invalidFile, attachments] = attachmentLabels[lang];
+	const uploadErrors: Record<string, string> = {type:typeError, size:sizeError, count:countError, total:totalError, invalid_attachment:invalidFile};
 	let sid = "";
 	let ready = false;
 	let busy = false;
 	const storageKey = "gorbach-sid";
-	try { sid = localStorage.getItem(storageKey) || ""; } catch {}
+	try {
+		sid = localStorage.getItem(storageKey) || "";
+		const saved = JSON.parse(localStorage.getItem(storageKey + "-files-" + sid) ?? "{}");
+		Object.assign(names, saved);
+	} catch {}
 
 	function saveSession(id: string) {
+		uploaded = [];
+		for (const key of Object.keys(names)) delete names[key];
 		sid = id;
 		try { localStorage.setItem(storageKey, id); } catch {}
 	}
 
-	async function request(route: string, body?: Record<string, string | string[]>) {
+	async function request(route: string, body?: Record<string, string | string[]> | FormData) {
 		const url = new URL(api);
 		url.pathname = url.pathname.replace(/\/$/, "") + "/" + route;
 		if (route === "history") url.searchParams.set("sid", sid);
 		const response = await fetch(url, {
 			method: body ? "POST" : "GET",
 			credentials: "omit",
-			headers: body ? { "Content-Type": "application/json" } : undefined,
-			body: body && JSON.stringify(body),
+			headers: body && !(body instanceof FormData) ? { "Content-Type": "application/json" } : undefined,
+			body: body instanceof FormData ? body : body && JSON.stringify(body),
 		});
 		const data = await response.json();
 		if (!response.ok) {
 			if (route !== "submit" && response.status === 404 && data.error === "unknown_session")
 				throw new Error("unknown_session");
-			throw new Error(data.error === "invalid_contact" ? "invalid_contact" : "request_failed");
+			throw new Error(typeof data.error === "string" ? data.error : "request_failed");
 		}
 		return data;
 	}
@@ -139,8 +161,10 @@ function mountWidget(api: URL) {
 		return control;
 	}
 
-	async function answer(payload: { text: string } | { chip: string } | { chips: string[] }) {
-		render(await request("msg", { sid, ...payload }), false);
+	async function answer(payload: Record<string, string | string[]>) {
+		const screen = await request("msg", { sid, ...payload });
+		uploaded = [];
+		render(screen, false);
 	}
 
 	function renderReceipt(leadId: string) {
@@ -158,9 +182,52 @@ function mountWidget(api: URL) {
 			return;
 		}
 		survey.replaceChildren();
+		attachmentField = screen.attachmentField;
 		input.placeholder = screen.input === "phone" ? copy.contact : inputLabel;
 		input.setAttribute("aria-label", input.placeholder);
-		form.hidden = !!screen.review;
+		form.hidden = !!screen.review || attachmentField?.type === "file";
+		const confirmed = [...new Set((screen.attachmentAnswers ?? []).flatMap(item => Object.values(item.fields).flat()))];
+		if (confirmed.length) {
+			const line = document.createElement("p");
+			line.textContent = attachments + " · " + confirmed.map(id => names[id] ?? id).join(", ");
+			survey.append(line);
+		}
+		if (attachmentField) {
+			const status = document.createElement("p");
+			status.setAttribute("role", "status");
+			status.textContent = screen.attachmentRecovery ? recovery : "";
+			const picker = document.createElement("input");
+			picker.type = "file";
+			picker.accept = ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.mp4,.mov";
+			picker.setAttribute("aria-label", attach);
+			const files = document.createElement("p");
+			const confirm = button(confirmFiles, () => void run(() => answer({files: uploaded.map(file => file.id)})));
+			const update = () => {
+				files.textContent = uploaded.map(file => file.name).join(", ");
+				confirm.disabled = !uploaded.length;
+			};
+			update();
+			picker.onchange = () => {
+				const file = picker.files?.[0];
+				if (!file) return;
+				picker.value = "";
+				void run(async () => {
+					status.textContent = uploading;
+					try {
+						const data = new FormData();
+						data.set("sid", sid);
+						data.set("file", file);
+						const result = await request("file", data);
+						uploaded.push(result.file);
+						names[result.file.id] = result.file.name;
+						try { localStorage.setItem(storageKey + "-files-" + sid, JSON.stringify(names)); } catch {}
+						update();
+					} finally { status.textContent = screen.attachmentRecovery ? recovery : ""; }
+				});
+			};
+			survey.append(picker, status, files);
+			if (attachmentField.type === "file") survey.append(confirm);
+		}
 		if (screen.progress) {
 			const progress = document.createElement("legend");
 			progress.textContent = `${copy.step} ${screen.progress.step} / ${screen.progress.total}`;
@@ -211,7 +278,15 @@ function mountWidget(api: URL) {
 		if (screen.multi) survey.append(confirm);
 		if (screen.review) {
 			survey.append(button(copy.submit, () => void run(async () => {
-				const { lead_id } = await request("submit", { sid });
+				let lead_id: string;
+				try { ({ lead_id } = await request("submit", { sid })); }
+				catch (cause) {
+					if (!(cause instanceof Error) || cause.message !== "incomplete") throw cause;
+					const history = await request("history");
+					render(history, true);
+					if (history.attachmentRecovery || history.lead_id) return;
+					throw cause;
+				}
 				if (typeof lead_id !== "string" || !lead_id) throw new Error("missing_lead_id");
 				renderReceipt(lead_id);
 			})));
@@ -261,7 +336,7 @@ function mountWidget(api: URL) {
 			await action();
 		} catch (cause) {
 			error.textContent = cause instanceof Error && cause.message === "invalid_contact"
-				? copy.invalidContact : errorLabel;
+				? copy.invalidContact : (cause instanceof Error && Object.hasOwn(uploadErrors, cause.message) ? uploadErrors[cause.message] : errorLabel);
 			if (cause instanceof Error && cause.message === "unknown_session") {
 				ready = false;
 				try { await restore(); } catch {}
@@ -284,7 +359,8 @@ function mountWidget(api: URL) {
 		void run(async () => {
 			if (!ready) await restore();
 			if (form.hidden) return;
-			await answer({ text });
+			if (attachmentField?.type === "text+file" && !uploaded.length) throw new Error("invalid_attachment");
+			await answer(attachmentField?.type === "text+file" ? {text, files: uploaded.map(file => file.id)} : {text});
 			input.value = "";
 			input.focus();
 		});
