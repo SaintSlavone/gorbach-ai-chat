@@ -353,7 +353,7 @@ function mountWidget(api: URL) {
 	form.onsubmit = (event) => {
 		event.preventDefault();
 		const text = input.value.trim();
-		if (!text) return;
+		if (busy || !text) return;
 		if (Array.from(text).length > 800) {
 			error.textContent = lengthErrors[lang];
 			return;
@@ -362,8 +362,27 @@ function mountWidget(api: URL) {
 			if (!ready) await restore();
 			if (form.hidden) return;
 			if (attachmentField?.type === "text+file" && !uploaded.length) throw new Error("invalid_attachment");
-			await answer(attachmentField?.type === "text+file" ? {text, files: uploaded.map(file => file.id)} : {text});
+			const draft = input.value;
 			input.value = "";
+			const question = document.createElement("p");
+			question.className = "visitor";
+			question.textContent = text;
+			const waiting = document.createElement("div");
+			waiting.className = "waiting";
+			waiting.setAttribute("role", "status");
+			waiting.setAttribute("aria-label", "Čekám na odpověď…");
+			transcript.append(question, waiting);
+			list.scrollTop = list.scrollHeight;
+			try {
+				await answer(attachmentField?.type === "text+file" ? {text, files: uploaded.map(file => file.id)} : {text});
+			} catch (cause) {
+				input.value = draft;
+				throw cause;
+			} finally {
+				question.remove();
+				waiting.remove();
+				list.scrollTop = list.scrollHeight;
+			}
 			input.focus();
 		});
 	};
