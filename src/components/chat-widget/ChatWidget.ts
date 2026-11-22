@@ -1,5 +1,28 @@
 declare const WIDGET_CSS: string;
 
+type ConversationScreen = {
+	messages: { role: string; text: string }[];
+	question?: string;
+	chips?: { id: string; label: string }[];
+	multi?: boolean;
+	input?: string;
+	progress?: { step: number; total: number } | null;
+	review?: {
+		products: { product: string; answers: Record<string, string | string[]>; notes?: string }[];
+		name: string;
+		email?: string;
+		phone?: string;
+	} | null;
+};
+
+const surveyLabels = {
+	cs: { confirm: "Potvrdit výběr", step: "Krok", contact: "Telefon nebo e-mail", submit: "Odeslat poptávku", receipt: "Číslo poptávky", invalidContact: "Zadejte platný telefon nebo e-mail." },
+	de: { confirm: "Auswahl bestätigen", step: "Schritt", contact: "Telefon oder E-Mail", submit: "Anfrage senden", receipt: "Anfragenummer", invalidContact: "Geben Sie eine gültige Telefonnummer oder E-Mail-Adresse ein." },
+	en: { confirm: "Confirm choices", step: "Step", contact: "Phone or email", submit: "Submit enquiry", receipt: "Enquiry number", invalidContact: "Enter a valid phone number or email address." },
+	ru: { confirm: "Подтвердить выбор", step: "Шаг", contact: "Телефон или эл. почта", submit: "Отправить заявку", receipt: "Номер заявки", invalidContact: "Введите действительный номер телефона или адрес электронной почты." },
+	uk: { confirm: "Підтвердити вибір", step: "Крок", contact: "Телефон або ел. пошта", submit: "Надіслати заявку", receipt: "Номер заявки", invalidContact: "Введіть дійсний номер телефону або адресу електронної пошти." },
+};
+
 const script = document.currentScript as HTMLScriptElement | null;
 const endpoint = script?.dataset.api;
 if (endpoint && script) {
@@ -25,6 +48,7 @@ function mountWidget(api: URL) {
 		uk: ["Відкрити чат", "Закрити чат", "Чим ми можемо вам допомогти?", "Повідомлення", "Надіслати", "Нова розмова", "Не вдалося виконати запит. Спробуйте ще раз."],
 	};
 	const lang = Object.hasOwn(labels, language) ? language : "cs";
+	const copy = surveyLabels[lang as keyof typeof surveyLabels];
 	const lengthErrors: Record<string, string> = {
 		cs: "Zpráva může obsahovat nejvýše 800 znaků.",
 		en: "Your message can contain up to 800 characters.",
@@ -42,7 +66,9 @@ function mountWidget(api: URL) {
 	</button><section id="chat" role="dialog" aria-labelledby="title" hidden>
 		<header><strong id="title">Gorbach žaluzie</strong><button class="close" type="button">×</button></header>
 		<button class="reset" type="button"></button>
-		<div class="conversation" role="log"><p></p></div>
+		<div class="conversation"><div class="messages" role="log"><p></p></div>
+			<fieldset class="survey"></fieldset>
+		</div>
 		<div class="error" role="alert"></div>
 		<form><input required type="text"><button type="submit"></button></form>
 	</section>`;
@@ -56,6 +82,8 @@ function mountWidget(api: URL) {
 	message.textContent = greeting;
 
 	const list = widget.querySelector<HTMLElement>(".conversation")!;
+	const transcript = widget.querySelector<HTMLElement>(".messages")!;
+	const survey = widget.querySelector("fieldset")!;
 	const form = widget.querySelector("form")!;
 	const input = widget.querySelector("input")!;
 	const send = form.querySelector("button")!;
@@ -76,7 +104,7 @@ function mountWidget(api: URL) {
 		try { localStorage.setItem(storageKey, id); } catch {}
 	}
 
-	async function request(route: string, body?: Record<string, string>) {
+	async function request(route: string, body?: Record<string, string | string[]>) {
 		const url = new URL(api);
 		url.pathname = url.pathname.replace(/\/$/, "") + "/" + route;
 		if (route === "history") url.searchParams.set("sid", sid);
@@ -90,28 +118,109 @@ function mountWidget(api: URL) {
 		if (!response.ok) {
 			if (response.status === 404 && data.error === "unknown_session")
 				throw new Error("unknown_session");
-			throw new Error("request_failed");
+			throw new Error(data.error === "invalid_contact" ? "invalid_contact" : "request_failed");
 		}
 		return data;
 	}
 
-	function render(messages: { role: string; text: string }[], replace: boolean) {
+	function button(label: string, action: () => void) {
+		const control = document.createElement("button");
+		control.type = "button";
+		control.textContent = label;
+		control.onclick = action;
+		return control;
+	}
+
+	async function answer(payload: { text: string } | { chip: string } | { chips: string[] }) {
+		render(await request("msg", { sid, ...payload }), false);
+	}
+
+	function renderSurvey(screen: ConversationScreen) {
+		survey.replaceChildren();
+		input.placeholder = screen.input === "phone" ? copy.contact : inputLabel;
+		input.setAttribute("aria-label", input.placeholder);
+		form.hidden = !!screen.review;
+		if (screen.progress) {
+			const progress = document.createElement("legend");
+			progress.textContent = `${copy.step} ${screen.progress.step} / ${screen.progress.total}`;
+			survey.append(progress);
+		}
+		if (screen.review) {
+			for (const item of screen.review.products) {
+				const title = document.createElement("strong");
+				title.textContent = item.product;
+				const answers = document.createElement("dl");
+				for (const [field, value] of Object.entries(item.answers)) {
+					const term = document.createElement("dt");
+					const detail = document.createElement("dd");
+					term.textContent = field;
+					detail.textContent = Array.isArray(value) ? value.join(", ") : value;
+					answers.append(term, detail);
+				}
+				survey.append(title, answers);
+				if (item.notes) {
+					const notes = document.createElement("p");
+					notes.textContent = item.notes;
+					survey.append(notes);
+				}
+			}
+			const contact = document.createElement("p");
+			contact.textContent = [screen.review.name, screen.review.phone, screen.review.email].filter(Boolean).join(" · ");
+			survey.append(contact);
+		}
+		const selected = new Set<string>();
+		const confirm = button(copy.confirm, () => void run(() => answer({ chips: [...selected] })));
+		confirm.disabled = true;
+		for (const chip of screen.chips ?? []) {
+			const multiple = screen.multi && chip.id !== "skip";
+			const choice = button(chip.label, () => {
+				if (!multiple) {
+					void run(() => answer({ chip: chip.id }));
+					return;
+				}
+				if (selected.has(chip.id)) selected.delete(chip.id);
+				else selected.add(chip.id);
+				choice.setAttribute("aria-pressed", String(selected.has(chip.id)));
+				confirm.disabled = !selected.size;
+			});
+			if (multiple) choice.setAttribute("aria-pressed", "false");
+			survey.append(choice);
+		}
+		if (screen.multi) survey.append(confirm);
+		if (screen.review) {
+			survey.append(button(copy.submit, () => void run(async () => {
+				const { lead_id } = await request("submit", { sid });
+				const receipt = document.createElement("p");
+				receipt.setAttribute("role", "status");
+				receipt.textContent = `${copy.receipt}: ${lead_id}`;
+				survey.replaceChildren(receipt);
+				list.scrollTop = list.scrollHeight;
+			})));
+		}
+	}
+
+	function render(screen: ConversationScreen, replace: boolean) {
 		const fragment = document.createDocumentFragment();
+		const messages = [...screen.messages];
+		const last = messages.at(-1);
+		if (screen.question && (last?.role !== "bot" || last.text !== screen.question))
+			messages.push({ role: "bot", text: screen.question });
 		for (const item of messages) {
 			const line = document.createElement("p");
 			line.classList.toggle("visitor", item.role === "visitor");
 			line.textContent = item.text;
 			fragment.append(line);
 		}
-		if (replace) list.replaceChildren(fragment);
-		else list.append(fragment);
+		if (replace) transcript.replaceChildren(fragment);
+		else transcript.append(fragment);
+		renderSurvey(screen);
 		list.scrollTop = list.scrollHeight;
 	}
 
 	async function restore() {
 		if (sid) {
 			try {
-				render((await request("history")).messages, true);
+				render(await request("history"), true);
 				ready = true;
 				return;
 			} catch (cause) {
@@ -120,26 +229,27 @@ function mountWidget(api: URL) {
 		}
 		const data = await request("start", { lang, page: location.href });
 		saveSession(data.sid);
-		render(data.messages, true);
+		render(data, true);
 		ready = true;
 	}
 
 	async function run(action: () => Promise<void>) {
 		if (busy) return;
 		busy = true;
-		input.readOnly = send.disabled = reset.disabled = true;
+		input.readOnly = send.disabled = reset.disabled = survey.disabled = true;
 		error.textContent = "";
 		try {
 			await action();
 		} catch (cause) {
-			error.textContent = errorLabel;
+			error.textContent = cause instanceof Error && cause.message === "invalid_contact"
+				? copy.invalidContact : errorLabel;
 			if (cause instanceof Error && cause.message === "unknown_session") {
 				ready = false;
 				try { await restore(); } catch {}
 			}
 		} finally {
 			busy = false;
-			input.readOnly = send.disabled = false;
+			input.readOnly = send.disabled = survey.disabled = false;
 			reset.disabled = !ready;
 		}
 	}
@@ -154,8 +264,7 @@ function mountWidget(api: URL) {
 		}
 		void run(async () => {
 			if (!ready) await restore();
-			const data = await request("msg", { sid, text });
-			render(data.messages, false);
+			await answer({ text });
 			input.value = "";
 			input.focus();
 		});
@@ -165,7 +274,9 @@ function mountWidget(api: URL) {
 		saveSession(data.sid);
 		ready = false;
 		input.value = "";
-		list.replaceChildren();
+		transcript.replaceChildren();
+		survey.replaceChildren();
+		form.hidden = false;
 		await restore();
 	});
 
