@@ -27,6 +27,7 @@ function mountWidget(api: URL) {
 	const lang = Object.hasOwn(labels, language) ? language : "cs";
 	const [openLabel, closeLabel, greeting, inputLabel, sendLabel, resetLabel, errorLabel] = labels[lang];
 	const widget = document.createElement("div");
+	widget.hidden = true;
 	widget.className = "chat-widget";
 	widget.lang = lang;
 	widget.innerHTML = `<button type="button" class="launcher" aria-controls="chat" aria-expanded="false">
@@ -177,8 +178,8 @@ function mountWidget(api: URL) {
 	void fetch(status, { credentials: "omit" }).then(async (response) => {
 		if (!response.ok) return;
 		const config = await response.json();
+		if (typeof config?.enabled !== "boolean" || typeof config.public !== "boolean") return;
 		if (typeof config.start?.greeting === "string") message.textContent = config.start.greeting;
-		if (typeof config.enabled !== "boolean" || typeof config.public !== "boolean") return;
 		let preview = false;
 		try { preview = localStorage.getItem("gorbach-preview") === "1"; } catch {}
 		function updateVisibility() {
