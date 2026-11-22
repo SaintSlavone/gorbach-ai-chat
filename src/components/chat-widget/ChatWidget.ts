@@ -25,6 +25,13 @@ function mountWidget(api: URL) {
 		uk: ["Відкрити чат", "Закрити чат", "Чим ми можемо вам допомогти?", "Повідомлення", "Надіслати", "Нова розмова", "Не вдалося виконати запит. Спробуйте ще раз."],
 	};
 	const lang = Object.hasOwn(labels, language) ? language : "cs";
+	const lengthErrors: Record<string, string> = {
+		cs: "Zpráva může obsahovat nejvýše 800 znaků.",
+		en: "Your message can contain up to 800 characters.",
+		de: "Ihre Nachricht darf höchstens 800 Zeichen enthalten.",
+		ru: "Сообщение может содержать не более 800 символов.",
+		uk: "Повідомлення може містити не більше 800 символів.",
+	};
 	const [openLabel, closeLabel, greeting, inputLabel, sendLabel, resetLabel, errorLabel] = labels[lang];
 	const widget = document.createElement("div");
 	widget.hidden = true;
@@ -141,6 +148,10 @@ function mountWidget(api: URL) {
 		event.preventDefault();
 		const text = input.value.trim();
 		if (!text) return;
+		if (Array.from(text).length > 800) {
+			error.textContent = lengthErrors[lang];
+			return;
+		}
 		void run(async () => {
 			if (!ready) await restore();
 			const data = await request("msg", { sid, text });
