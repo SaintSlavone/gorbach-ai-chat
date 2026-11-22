@@ -18,14 +18,14 @@ function mountWidget(api: URL) {
 	style.textContent = WIDGET_CSS;
 	const language = document.documentElement.lang.toLowerCase().split("-")[0];
 	const labels: Record<string, string[]> = {
-		cs: ["Otevřít chat", "Zavřít chat", "Jak vám můžeme pomoci?"],
-		en: ["Open chat", "Close chat", "How can we help you?"],
-		de: ["Chat öffnen", "Chat schließen", "Wie können wir Ihnen helfen?"],
-		ru: ["Открыть чат", "Закрыть чат", "Чем мы можем вам помочь?"],
-		uk: ["Відкрити чат", "Закрити чат", "Чим ми можемо вам допомогти?"],
+		cs: ["Otevřít chat", "Zavřít chat", "Jak vám můžeme pomoci?", "Zpráva", "Odeslat", "Nový rozhovor", "Akci se nepodařilo dokončit. Zkuste to znovu."],
+		en: ["Open chat", "Close chat", "How can we help you?", "Message", "Send", "New conversation", "Could not complete the request. Please try again."],
+		de: ["Chat öffnen", "Chat schließen", "Wie können wir Ihnen helfen?", "Nachricht", "Senden", "Neues Gespräch", "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut."],
+		ru: ["Открыть чат", "Закрыть чат", "Чем мы можем вам помочь?", "Сообщение", "Отправить", "Новый разговор", "Не удалось выполнить запрос. Попробуйте ещё раз."],
+		uk: ["Відкрити чат", "Закрити чат", "Чим ми можемо вам допомогти?", "Повідомлення", "Надіслати", "Нова розмова", "Не вдалося виконати запит. Спробуйте ще раз."],
 	};
 	const lang = Object.hasOwn(labels, language) ? language : "cs";
-	const [openLabel, closeLabel, greeting] = labels[lang];
+	const [openLabel, closeLabel, greeting, inputLabel, sendLabel, resetLabel, errorLabel] = labels[lang];
 	const widget = document.createElement("div");
 	widget.className = "chat-widget";
 	widget.lang = lang;
@@ -33,7 +33,10 @@ function mountWidget(api: URL) {
 		<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-8 8H5l-3 2 1.8-6A8 8 0 1 1 20 11.5Z"/><path d="M7.5 9.5h8m-8 4h5"/></svg>
 	</button><section id="chat" role="dialog" aria-labelledby="title" hidden>
 		<header><strong id="title">Gorbach žaluzie</strong><button class="close" type="button">×</button></header>
-		<div class="conversation"><p></p></div>
+		<button class="reset" type="button"></button>
+		<div class="conversation" role="log"><p></p></div>
+		<div class="error" role="alert"></div>
+		<form><input required type="text"><button type="submit"></button></form>
 	</section>`;
 	root.append(style, widget);
 	const launcher = widget.querySelector<HTMLButtonElement>(".launcher")!;
@@ -44,11 +47,122 @@ function mountWidget(api: URL) {
 	close.setAttribute("aria-label", closeLabel);
 	message.textContent = greeting;
 
+	const list = widget.querySelector<HTMLElement>(".conversation")!;
+	const form = widget.querySelector("form")!;
+	const input = widget.querySelector("input")!;
+	const send = form.querySelector("button")!;
+	const reset = widget.querySelector<HTMLButtonElement>(".reset")!;
+	const error = widget.querySelector<HTMLElement>(".error")!;
+	input.placeholder = inputLabel;
+	input.setAttribute("aria-label", inputLabel);
+	send.textContent = sendLabel;
+	reset.textContent = resetLabel;
+	let sid = "";
+	let ready = false;
+	let busy = false;
+	const storageKey = "gorbach-sid";
+	try { sid = localStorage.getItem(storageKey) || ""; } catch {}
+
+	function saveSession(id: string) {
+		sid = id;
+		try { localStorage.setItem(storageKey, id); } catch {}
+	}
+
+	async function request(route: string, body?: Record<string, string>) {
+		const url = new URL(api);
+		url.pathname = url.pathname.replace(/\/$/, "") + "/" + route;
+		if (route === "history") url.searchParams.set("sid", sid);
+		const response = await fetch(url, {
+			method: body ? "POST" : "GET",
+			credentials: "omit",
+			headers: body ? { "Content-Type": "application/json" } : undefined,
+			body: body && JSON.stringify(body),
+		});
+		const data = await response.json();
+		if (!response.ok) {
+			if (response.status === 404 && data.error === "unknown_session")
+				throw new Error("unknown_session");
+			throw new Error("request_failed");
+		}
+		return data;
+	}
+
+	function render(messages: { role: string; text: string }[], replace: boolean) {
+		const fragment = document.createDocumentFragment();
+		for (const item of messages) {
+			const line = document.createElement("p");
+			line.classList.toggle("visitor", item.role === "visitor");
+			line.textContent = item.text;
+			fragment.append(line);
+		}
+		if (replace) list.replaceChildren(fragment);
+		else list.append(fragment);
+		list.scrollTop = list.scrollHeight;
+	}
+
+	async function restore() {
+		if (sid) {
+			try {
+				render((await request("history")).messages, true);
+				ready = true;
+				return;
+			} catch (cause) {
+				if (!(cause instanceof Error && cause.message === "unknown_session")) throw cause;
+			}
+		}
+		const data = await request("start", { lang, page: location.href });
+		saveSession(data.sid);
+		render(data.messages, true);
+		ready = true;
+	}
+
+	async function run(action: () => Promise<void>) {
+		if (busy) return;
+		busy = true;
+		input.readOnly = send.disabled = reset.disabled = true;
+		error.textContent = "";
+		try {
+			await action();
+		} catch (cause) {
+			error.textContent = errorLabel;
+			if (cause instanceof Error && cause.message === "unknown_session") {
+				ready = false;
+				try { await restore(); } catch {}
+			}
+		} finally {
+			busy = false;
+			input.readOnly = send.disabled = false;
+			reset.disabled = !ready;
+		}
+	}
+
+	form.onsubmit = (event) => {
+		event.preventDefault();
+		const text = input.value.trim();
+		if (!text) return;
+		void run(async () => {
+			if (!ready) await restore();
+			const data = await request("msg", { sid, text });
+			render(data.messages, false);
+			input.value = "";
+			input.focus();
+		});
+	};
+	reset.onclick = () => void run(async () => {
+		const data = await request("reset", { sid });
+		saveSession(data.sid);
+		ready = false;
+		input.value = "";
+		list.replaceChildren();
+		await restore();
+	});
+
 	function handleToggle(open: boolean) {
 		panel.hidden = !open;
 		launcher.hidden = open;
 		launcher.setAttribute("aria-expanded", String(open));
 		(open ? close : launcher).focus();
+		if (open && !ready) void run(restore);
 	}
 	launcher.onclick = () => handleToggle(true);
 	close.onclick = () => handleToggle(false);
