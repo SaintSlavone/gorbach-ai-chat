@@ -3,6 +3,7 @@ declare const WIDGET_CSS: string;
 type ConversationScreen = {
 	attachmentField?: { id: string; type: "file" | "text+file" } | null;
 	attachmentRecovery?: { product: string; field: string };
+	pendingAttachments?: { id: string; name: string; size: number }[];
 	attachmentAnswers?: { product: string; fields: Record<string, string[]> }[];
 	messages: { role: string; text: string }[];
 	lead_id?: string;
@@ -163,7 +164,6 @@ function mountWidget(api: URL) {
 
 	async function answer(payload: Record<string, string | string[]>) {
 		const screen = await request("msg", { sid, ...payload });
-		uploaded = [];
 		render(screen, false);
 	}
 
@@ -177,12 +177,14 @@ function mountWidget(api: URL) {
 	}
 
 	function renderSurvey(screen: ConversationScreen) {
+		attachmentField = screen.lead_id ? null : screen.attachmentField;
+		uploaded = attachmentField ? screen.pendingAttachments ?? [] : [];
+		for (const file of uploaded) names[file.id] = file.name;
 		if (screen.lead_id) {
 			renderReceipt(screen.lead_id);
 			return;
 		}
 		survey.replaceChildren();
-		attachmentField = screen.attachmentField;
 		input.placeholder = screen.input === "phone" ? copy.contact : inputLabel;
 		input.setAttribute("aria-label", input.placeholder);
 		form.hidden = !!screen.review || attachmentField?.type === "file";
