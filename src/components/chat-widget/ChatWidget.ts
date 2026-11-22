@@ -8,7 +8,13 @@ type ConversationScreen = {
 	input?: string;
 	progress?: { step: number; total: number } | null;
 	review?: {
-		products: { product: string; answers: Record<string, string | string[]>; notes?: string }[];
+		products: {
+			product: string;
+			title: string;
+			questionLabels: Record<string, string>;
+			answers: Record<string, string | string[]>;
+			notes?: string;
+		}[];
 		name: string;
 		email?: string;
 		phone?: string;
@@ -148,12 +154,12 @@ function mountWidget(api: URL) {
 		if (screen.review) {
 			for (const item of screen.review.products) {
 				const title = document.createElement("strong");
-				title.textContent = item.product;
+				title.textContent = item.title ?? item.product;
 				const answers = document.createElement("dl");
 				for (const [field, value] of Object.entries(item.answers)) {
 					const term = document.createElement("dt");
 					const detail = document.createElement("dd");
-					term.textContent = field;
+					term.textContent = item.questionLabels?.[field] ?? field;
 					detail.textContent = Array.isArray(value) ? value.join(", ") : value;
 					answers.append(term, detail);
 				}
