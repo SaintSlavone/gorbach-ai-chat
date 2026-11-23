@@ -6,19 +6,25 @@ import { setImmediate } from "node:timers/promises";
 class Element {
 	children = [];
 	queries = new Map();
+	attributes = new Map();
 	classList = { toggle() {} };
 	value = "";
 	textContent = "";
-	append(...nodes) { this.children.push(...nodes); }
+	append(...nodes) {
+		for (const node of nodes) node.parent = this;
+		this.children.push(...nodes);
+	}
 	replaceChildren(...nodes) { this.children = nodes; }
 	querySelector(key) {
 		if (!this.queries.has(key)) this.queries.set(key, new Element());
 		return this.queries.get(key);
 	}
 	attachShadow() { return this.shadow = new Element(); }
-	setAttribute() {}
+	setAttribute(name, value) { this.attributes.set(name, value); }
 	focus() { this.focused = true; }
-	remove() {}
+	remove() {
+		if (this.parent) this.parent.children = this.parent.children.filter(node => node !== this);
+	}
 }
 
 const source = readFileSync("public/widget/gorbach.js", "utf8");
@@ -40,7 +46,7 @@ async function mount(lang = "en") {
 			if(route==="status") return Response.json({enabled:true, public:true});
 			const [expected, result, check, status] = queue.shift();
 			assert.equal(route,expected);
-			check?.(options.body);
+			check?.(options.body, url);
 			return Response.json(result, {status:status ?? 200});
 		},
 	});
@@ -100,37 +106,73 @@ const suggestions = [
 	{ id: "handoff", label: "Ask a specialist" },
 ];
 const handoffReview = {
+	lang: "ru",
 	messages: [],
 	review: { purpose: "handoff", products: [], name: "Jana", email: "jana@example.com" },
 };
 queue.push(
 	["history", { messages: [], chips: suggestions }],
-	["msg", { messages: [], input: "text", question: "What is your name?" }, payload({ chip: "handoff" })],
-	["msg", { messages: [], input: "phone" }, payload({ text: "Jana" })],
+	["msg", { lang: "ru", messages: [], input: "text", question: "Как вас зовут?" }, payload({ chip: "handoff" })],
+	["msg", { lang: "ru", messages: [], input: "phone" }, payload({ text: "Jana" })],
+	["msg", { error: "invalid_contact" }, payload({ text: "неверный" }), 400],
 	["msg", handoffReview, payload({ text: "jana@example.com" })],
+	["history", handoffReview],
 	["submit", { lead_id: "GZ-2" }, payload({})],
-	["history", { messages: [], lead_id: "GZ-2" }],
+	["history", { lang: "ru", messages: [], lead_id: "GZ-2" }],
+	["reset", { sid: "fresh" }, payload({})],
+	["history", { lang: "uk", messages: [] }, (_body, url) => assert.equal(url.searchParams.get("sid"), "fresh")],
 );
-widget = await mount();
-assert.match(widget.querySelector("p").textContent, /Gorbach žaluzie AI assistant/);
+widget = await mount("cs-CZ");
+assert.match(widget.querySelector("p").textContent, /AI asistent Gorbach žaluzie/);
+assert.equal(widget.lang, "cs");
 assert.deepEqual(widget.querySelector("fieldset").children.map(node => node.textContent),
 	suggestions.map(({ label }) => label));
 await click(widget, "Ask a specialist");
 const contactInput = widget.querySelector("input");
 assert.equal(contactInput.focused, true);
-for (const text of ["Jana", "jana@example.com"]) {
-	contactInput.value = text;
+assert.equal(widget.lang, "ru");
+assert.equal(widget.querySelector(".launcher").attributes.get("aria-label"), "Открыть чат");
+assert.equal(widget.querySelector(".close").attributes.get("aria-label"), "Закрыть чат");
+assert.equal(widget.querySelector(".reset").textContent, "Новый разговор");
+assert.equal(widget.querySelector("form").querySelector("button").textContent, "Отправить");
+
+async function sendContact(text) {
+	widget.querySelector("input").value = text;
 	widget.querySelector("form").onsubmit({ preventDefault() {} });
+	const waiting = widget.querySelector(".messages").children.find(node => node.className === "waiting");
+	assert.equal(waiting.attributes.get("aria-label"), "Ожидаю ответа…");
 	await setImmediate();
-	assert.equal(widget.querySelector(".error").textContent, "");
-	if (text === "Jana") assert.equal(contactInput.placeholder, "Phone or email");
 }
+await sendContact("Jana");
+assert.equal(contactInput.placeholder, "Телефон или эл. почта");
+assert.equal(contactInput.attributes.get("aria-label"), contactInput.placeholder);
+await sendContact("неверный");
+assert.match(widget.querySelector(".error").textContent, /действительный номер/);
+await sendContact("jana@example.com");
+assert.equal(widget.querySelector(".error").textContent, "");
 assert.equal(widget.querySelector("form").hidden, true);
-assert.equal(widget.querySelector("fieldset").children[0].textContent, "Jana · jana@example.com");
-await click(widget, "Send to a specialist");
-assert.equal(widget.querySelector("fieldset").children[0].textContent, "Enquiry number: GZ-2");
 widget = await mount("uk");
 assert.match(widget.querySelector("p").textContent, /ШІ-асистент Gorbach žaluzie/);
+assert.equal(widget.lang, "ru");
+assert.equal(widget.querySelector("form").hidden, true);
+assert.equal(widget.querySelector("fieldset").children[0].textContent, "Jana · jana@example.com");
+await click(widget, "Передать специалисту");
+assert.equal(widget.querySelector("fieldset").children[0].textContent, "Номер заявки: GZ-2");
+widget = await mount("cs");
+assert.equal(widget.lang, "ru");
 assert.equal(widget.querySelector("fieldset").children[0].textContent, "Номер заявки: GZ-2");
 assert.equal(widget.querySelector("form").hidden, true);
+widget.querySelector(".reset").onclick();
+await setImmediate();
+assert.equal(widget.lang, "uk");
+assert.equal(widget.querySelector(".reset").textContent, "Нова розмова");
+assert.equal(widget.querySelector("form").hidden, false);
+
+storage.delete("gorbach-sid");
+queue.push(["start", { sid: "fresh", lang: "constructor", messages: [] }, body => {
+	assert.deepEqual(JSON.parse(body), { lang: "de", page: "http://localhost/" });
+}]);
+widget = await mount("de-DE");
+assert.equal(widget.lang, "de");
+assert.equal(widget.querySelector("input").placeholder, "Nachricht");
 assert.equal(queue.length, 0);

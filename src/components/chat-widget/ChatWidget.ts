@@ -1,6 +1,7 @@
 declare const WIDGET_CSS: string;
 
 type ConversationScreen = {
+	lang?: ChatLanguage;
 	attachmentField?: { id: string; type: "file" | "text+file" } | null;
 	attachmentRecovery?: { product: string; field: string };
 	pendingAttachments?: { id: string; name: string; size: number }[];
@@ -36,6 +37,12 @@ const surveyLabels = {
 	uk: { confirm: "Підтвердити вибір", step: "Крок", contact: "Телефон або ел. пошта", submit: "Надіслати заявку", receipt: "Номер заявки", invalidContact: "Введіть дійсний номер телефону або адресу електронної пошти." },
 };
 
+type ChatLanguage = keyof typeof surveyLabels;
+
+function isChatLanguage(value: unknown): value is ChatLanguage {
+	return typeof value === "string" && Object.hasOwn(surveyLabels, value);
+}
+
 const handoffLabels = {
 	cs: "Předat specialistovi",
 	de: "An das Fachteam weiterleiten",
@@ -69,16 +76,40 @@ function mountWidget(api: URL) {
 	const style = document.createElement("style");
 	style.textContent = WIDGET_CSS;
 	const language = document.documentElement.lang.toLowerCase().split("-")[0];
-	const labels: Record<string, string[]> = {
-		cs: ["Otevřít chat", "Zavřít chat", "Dobrý den! Jsem AI asistent Gorbach žaluzie. Jak vám mohu pomoci s výběrem stínění?", "Zpráva", "Odeslat", "Nový rozhovor", "Akci se nepodařilo dokončit. Zkuste to znovu."],
-		en: ["Open chat", "Close chat", "Hello! I’m the Gorbach žaluzie AI assistant. How can I help you choose shading?", "Message", "Send", "New conversation", "Could not complete the request. Please try again."],
-		de: ["Chat öffnen", "Chat schließen", "Hallo! Ich bin der KI-Assistent von Gorbach žaluzie. Wie kann ich Ihnen bei der Wahl des Sonnenschutzes helfen?", "Nachricht", "Senden", "Neues Gespräch", "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut."],
-		ru: ["Открыть чат", "Закрыть чат", "Здравствуйте! Я ИИ-ассистент Gorbach žaluzie. Как я могу помочь вам выбрать солнцезащиту?", "Сообщение", "Отправить", "Новый разговор", "Не удалось выполнить запрос. Попробуйте ещё раз."],
-		uk: ["Відкрити чат", "Закрити чат", "Вітаю! Я ШІ-асистент Gorbach žaluzie. Як я можу допомогти вам вибрати сонцезахист?", "Повідомлення", "Надіслати", "Нова розмова", "Не вдалося виконати запит. Спробуйте ще раз."],
+	const labels = {
+		cs: {
+			open: "Otevřít chat", close: "Zavřít chat",
+			greeting: "Dobrý den! Jsem AI asistent Gorbach žaluzie. Jak vám mohu pomoci s výběrem stínění?",
+			input: "Zpráva", send: "Odeslat", reset: "Nový rozhovor",
+			error: "Akci se nepodařilo dokončit. Zkuste to znovu.", waiting: "Čekám na odpověď…",
+		},
+		en: {
+			open: "Open chat", close: "Close chat",
+			greeting: "Hello! I’m the Gorbach žaluzie AI assistant. How can I help you choose shading?",
+			input: "Message", send: "Send", reset: "New conversation",
+			error: "Could not complete the request. Please try again.", waiting: "Waiting for a reply…",
+		},
+		de: {
+			open: "Chat öffnen", close: "Chat schließen",
+			greeting: "Hallo! Ich bin der KI-Assistent von Gorbach žaluzie. Wie kann ich Ihnen bei der Wahl des Sonnenschutzes helfen?",
+			input: "Nachricht", send: "Senden", reset: "Neues Gespräch",
+			error: "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut.", waiting: "Warte auf eine Antwort…",
+		},
+		ru: {
+			open: "Открыть чат", close: "Закрыть чат",
+			greeting: "Здравствуйте! Я ИИ-ассистент Gorbach žaluzie. Как я могу помочь вам выбрать солнцезащиту?",
+			input: "Сообщение", send: "Отправить", reset: "Новый разговор",
+			error: "Не удалось выполнить запрос. Попробуйте ещё раз.", waiting: "Ожидаю ответа…",
+		},
+		uk: {
+			open: "Відкрити чат", close: "Закрити чат",
+			greeting: "Вітаю! Я ШІ-асистент Gorbach žaluzie. Як я можу допомогти вам вибрати сонцезахист?",
+			input: "Повідомлення", send: "Надіслати", reset: "Нова розмова",
+			error: "Не вдалося виконати запит. Спробуйте ще раз.", waiting: "Очікую на відповідь…",
+		},
 	};
-	const lang = Object.hasOwn(surveyLabels, language)
-		? language as keyof typeof surveyLabels : "cs";
-	const copy = surveyLabels[lang];
+	const pageLang = isChatLanguage(language) ? language : "cs";
+	let lang: ChatLanguage = pageLang;
 	const lengthErrors: Record<string, string> = {
 		cs: "Zpráva může obsahovat nejvýše 800 znaků.",
 		en: "Your message can contain up to 800 characters.",
@@ -86,11 +117,9 @@ function mountWidget(api: URL) {
 		ru: "Сообщение может содержать не более 800 символов.",
 		uk: "Повідомлення може містити не більше 800 символів.",
 	};
-	const [openLabel, closeLabel, greeting, inputLabel, sendLabel, resetLabel, errorLabel] = labels[lang];
 	const widget = document.createElement("div");
 	widget.hidden = true;
 	widget.className = "chat-widget";
-	widget.lang = lang;
 	widget.innerHTML = `<button type="button" class="launcher" aria-controls="chat" aria-expanded="false">
 		<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-8 8H5l-3 2 1.8-6A8 8 0 1 1 20 11.5Z"/><path d="M7.5 9.5h8m-8 4h5"/></svg>
 	</button><section id="chat" role="dialog" aria-labelledby="title" hidden>
@@ -107,9 +136,7 @@ function mountWidget(api: URL) {
 	const close = widget.querySelector<HTMLButtonElement>(".close")!;
 	const panel = widget.querySelector("section")!;
 	const message = widget.querySelector("p")!;
-	launcher.setAttribute("aria-label", openLabel);
-	close.setAttribute("aria-label", closeLabel);
-	message.textContent = greeting;
+	message.textContent = labels[pageLang].greeting;
 
 	const list = widget.querySelector<HTMLElement>(".conversation")!;
 	const transcript = widget.querySelector<HTMLElement>(".messages")!;
@@ -119,15 +146,10 @@ function mountWidget(api: URL) {
 	const send = form.querySelector("button")!;
 	const reset = widget.querySelector<HTMLButtonElement>(".reset")!;
 	const error = widget.querySelector<HTMLElement>(".error")!;
-	input.placeholder = inputLabel;
-	input.setAttribute("aria-label", inputLabel);
-	send.textContent = sendLabel;
-	reset.textContent = resetLabel;
+	localizeControls(pageLang);
 	let attachmentField: ConversationScreen["attachmentField"];
 	let uploaded: {id: string; name: string}[] = [];
 	const names: Record<string, string> = Object.create(null);
-	const [attach, uploading, confirmFiles, recovery, typeError, sizeError, countError, totalError, invalidFile, attachments] = attachmentLabels[lang];
-	const uploadErrors: Record<string, string> = {type:typeError, size:sizeError, count:countError, total:totalError, invalid_attachment:invalidFile};
 	let sid = "";
 	let ready = false;
 	let busy = false;
@@ -137,6 +159,28 @@ function mountWidget(api: URL) {
 		const saved = JSON.parse(localStorage.getItem(storageKey + "-files-" + sid) ?? "{}");
 		Object.assign(names, saved);
 	} catch {}
+
+	function localizeControls(locale: ChatLanguage, inputType?: string) {
+		lang = locale;
+		widget.lang = locale;
+		const copy = labels[locale];
+		launcher.setAttribute("aria-label", copy.open);
+		close.setAttribute("aria-label", copy.close);
+		input.placeholder = inputType === "phone" ? surveyLabels[locale].contact : copy.input;
+		input.setAttribute("aria-label", input.placeholder);
+		send.textContent = copy.send;
+		reset.textContent = copy.reset;
+	}
+
+	function errorMessage(cause: unknown) {
+		if (cause instanceof Error) {
+			if (cause.message === "invalid_contact") return surveyLabels[lang].invalidContact;
+			const [, , , , type, size, count, total, invalid_attachment] = attachmentLabels[lang];
+			const uploadErrors: Record<string, string> = { type, size, count, total, invalid_attachment };
+			if (Object.hasOwn(uploadErrors, cause.message)) return uploadErrors[cause.message];
+		}
+		return labels[lang].error;
+	}
 
 	function saveSession(id: string) {
 		uploaded = [];
@@ -180,7 +224,7 @@ function mountWidget(api: URL) {
 	function renderReceipt(leadId: string) {
 		const receipt = document.createElement("p");
 		receipt.setAttribute("role", "status");
-		receipt.textContent = `${copy.receipt}: ${leadId}`;
+		receipt.textContent = `${surveyLabels[lang].receipt}: ${leadId}`;
 		survey.replaceChildren(receipt);
 		form.hidden = true;
 		list.scrollTop = list.scrollHeight;
@@ -195,9 +239,9 @@ function mountWidget(api: URL) {
 			return;
 		}
 		survey.replaceChildren();
-		input.placeholder = screen.input === "phone" ? copy.contact : inputLabel;
-		input.setAttribute("aria-label", input.placeholder);
 		form.hidden = !!screen.review || attachmentField?.type === "file";
+		const copy = surveyLabels[lang];
+		const [attach, uploading, confirmFiles, recovery, , , , , , attachments] = attachmentLabels[lang];
 		const confirmed = [...new Set((screen.attachmentAnswers ?? []).flatMap(item => Object.values(item.fields).flat()))];
 		if (confirmed.length) {
 			const line = document.createElement("p");
@@ -311,6 +355,7 @@ function mountWidget(api: URL) {
 	}
 
 	function render(screen: ConversationScreen, replace: boolean) {
+		localizeControls(isChatLanguage(screen.lang) ? screen.lang : pageLang, screen.input);
 		const fragment = document.createDocumentFragment();
 		const messages = [...screen.messages];
 		const last = messages.at(-1);
@@ -338,7 +383,7 @@ function mountWidget(api: URL) {
 				if (!(cause instanceof Error && cause.message === "unknown_session")) throw cause;
 			}
 		}
-		const data = await request("start", { lang, page: location.href });
+		const data = await request("start", { lang: pageLang, page: location.href });
 		saveSession(data.sid);
 		render(data, true);
 		ready = true;
@@ -352,8 +397,7 @@ function mountWidget(api: URL) {
 		try {
 			await action();
 		} catch (cause) {
-			error.textContent = cause instanceof Error && cause.message === "invalid_contact"
-				? copy.invalidContact : (cause instanceof Error && Object.hasOwn(uploadErrors, cause.message) ? uploadErrors[cause.message] : errorLabel);
+			error.textContent = errorMessage(cause);
 			if (cause instanceof Error && cause.message === "unknown_session") {
 				ready = false;
 				try { await restore(); } catch {}
@@ -385,7 +429,7 @@ function mountWidget(api: URL) {
 			const waiting = document.createElement("div");
 			waiting.className = "waiting";
 			waiting.setAttribute("role", "status");
-			waiting.setAttribute("aria-label", "Čekám na odpověď…");
+			waiting.setAttribute("aria-label", labels[lang].waiting);
 			transcript.append(question, waiting);
 			list.scrollTop = list.scrollHeight;
 			try {
@@ -428,7 +472,7 @@ function mountWidget(api: URL) {
 	// The stand supplies the configured greeting when its API is available.
 	const status = new URL(api);
 	status.pathname = status.pathname.replace(/\/$/, "") + "/status";
-	status.searchParams.set("lang", lang);
+	status.searchParams.set("lang", pageLang);
 	void fetch(status, { credentials: "omit" }).then(async (response) => {
 		if (!response.ok) return;
 		const config = await response.json();
