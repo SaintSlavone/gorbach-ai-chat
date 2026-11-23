@@ -13,6 +13,7 @@ type ConversationScreen = {
 	input?: string;
 	progress?: { step: number; total: number } | null;
 	review?: {
+		purpose?: "handoff";
 		products: {
 			product: string;
 			title: string;
@@ -33,6 +34,14 @@ const surveyLabels = {
 	en: { confirm: "Confirm choices", step: "Step", contact: "Phone or email", submit: "Submit enquiry", receipt: "Enquiry number", invalidContact: "Enter a valid phone number or email address." },
 	ru: { confirm: "Подтвердить выбор", step: "Шаг", contact: "Телефон или эл. почта", submit: "Отправить заявку", receipt: "Номер заявки", invalidContact: "Введите действительный номер телефона или адрес электронной почты." },
 	uk: { confirm: "Підтвердити вибір", step: "Крок", contact: "Телефон або ел. пошта", submit: "Надіслати заявку", receipt: "Номер заявки", invalidContact: "Введіть дійсний номер телефону або адресу електронної пошти." },
+};
+
+const handoffLabels = {
+	cs: "Předat specialistovi",
+	de: "An das Fachteam weiterleiten",
+	en: "Send to a specialist",
+	ru: "Передать специалисту",
+	uk: "Передати фахівцю",
 };
 
 const attachmentLabels: Record<string, string[]> = {
@@ -61,14 +70,15 @@ function mountWidget(api: URL) {
 	style.textContent = WIDGET_CSS;
 	const language = document.documentElement.lang.toLowerCase().split("-")[0];
 	const labels: Record<string, string[]> = {
-		cs: ["Otevřít chat", "Zavřít chat", "Jak vám můžeme pomoci?", "Zpráva", "Odeslat", "Nový rozhovor", "Akci se nepodařilo dokončit. Zkuste to znovu."],
-		en: ["Open chat", "Close chat", "How can we help you?", "Message", "Send", "New conversation", "Could not complete the request. Please try again."],
-		de: ["Chat öffnen", "Chat schließen", "Wie können wir Ihnen helfen?", "Nachricht", "Senden", "Neues Gespräch", "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut."],
-		ru: ["Открыть чат", "Закрыть чат", "Чем мы можем вам помочь?", "Сообщение", "Отправить", "Новый разговор", "Не удалось выполнить запрос. Попробуйте ещё раз."],
-		uk: ["Відкрити чат", "Закрити чат", "Чим ми можемо вам допомогти?", "Повідомлення", "Надіслати", "Нова розмова", "Не вдалося виконати запит. Спробуйте ще раз."],
+		cs: ["Otevřít chat", "Zavřít chat", "Dobrý den! Jsem AI asistent Gorbach žaluzie. Jak vám mohu pomoci s výběrem stínění?", "Zpráva", "Odeslat", "Nový rozhovor", "Akci se nepodařilo dokončit. Zkuste to znovu."],
+		en: ["Open chat", "Close chat", "Hello! I’m the Gorbach žaluzie AI assistant. How can I help you choose shading?", "Message", "Send", "New conversation", "Could not complete the request. Please try again."],
+		de: ["Chat öffnen", "Chat schließen", "Hallo! Ich bin der KI-Assistent von Gorbach žaluzie. Wie kann ich Ihnen bei der Wahl des Sonnenschutzes helfen?", "Nachricht", "Senden", "Neues Gespräch", "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut."],
+		ru: ["Открыть чат", "Закрыть чат", "Здравствуйте! Я ИИ-ассистент Gorbach žaluzie. Как я могу помочь вам выбрать солнцезащиту?", "Сообщение", "Отправить", "Новый разговор", "Не удалось выполнить запрос. Попробуйте ещё раз."],
+		uk: ["Відкрити чат", "Закрити чат", "Вітаю! Я ШІ-асистент Gorbach žaluzie. Як я можу допомогти вам вибрати сонцезахист?", "Повідомлення", "Надіслати", "Нова розмова", "Не вдалося виконати запит. Спробуйте ще раз."],
 	};
-	const lang = Object.hasOwn(labels, language) ? language : "cs";
-	const copy = surveyLabels[lang as keyof typeof surveyLabels];
+	const lang = Object.hasOwn(surveyLabels, language)
+		? language as keyof typeof surveyLabels : "cs";
+	const copy = surveyLabels[lang];
 	const lengthErrors: Record<string, string> = {
 		cs: "Zpráva může obsahovat nejvýše 800 znaků.",
 		en: "Your message can contain up to 800 characters.",
@@ -266,7 +276,10 @@ function mountWidget(api: URL) {
 			const multiple = screen.multi && chip.id !== "skip";
 			const choice = button(chip.label, () => {
 				if (!multiple) {
-					void run(() => answer({ chip: chip.id }));
+					void run(async () => {
+						await answer({ chip: chip.id });
+						if (!panel.hidden && !form.hidden) input.focus();
+					});
 					return;
 				}
 				if (selected.has(chip.id)) selected.delete(chip.id);
@@ -279,7 +292,9 @@ function mountWidget(api: URL) {
 		}
 		if (screen.multi) survey.append(confirm);
 		if (screen.review) {
-			survey.append(button(copy.submit, () => void run(async () => {
+			const submitLabel = screen.review.purpose === "handoff"
+				? handoffLabels[lang] : copy.submit;
+			survey.append(button(submitLabel, () => void run(async () => {
 				let lead_id: string;
 				try { ({ lead_id } = await request("submit", { sid })); }
 				catch (cause) {

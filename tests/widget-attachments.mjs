@@ -17,7 +17,8 @@ class Element {
 	}
 	attachShadow() { return this.shadow = new Element(); }
 	setAttribute() {}
-	focus() {}
+	focus() { this.focused = true; }
+	remove() {}
 }
 
 const source = readFileSync("public/widget/gorbach.js", "utf8");
@@ -27,10 +28,10 @@ const detail = { messages: [], question: "Details?", attachmentField: { id: "det
 const review = { ...detail, attachmentField: null, review: { products: [], name: "Jana" } };
 const replacement = { ...file, attachmentRecovery: { product: "sample", field: "photo" } };
 const queue = [];
-async function mount() {
+async function mount(lang = "en") {
 	const body = new Element();
 	runInNewContext(source, {
-		document: {currentScript:{dataset:{api:"/api"}},baseURI:"http://localhost/",body,documentElement:{lang:"en"},
+		document: {currentScript:{dataset:{api:"/api"}},baseURI:"http://localhost/",body,documentElement:{lang},
 			querySelector:()=>null,createElement:()=>new Element(),createDocumentFragment:()=>new Element()},
 		localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
 		window:{addEventListener(){}},location:{hash:"",href:"http://localhost/"},URL,FormData,Error,
@@ -92,3 +93,44 @@ await click(widget,"Submit enquiry");
 assert.equal(widget.querySelector("fieldset").children[0].textContent,"Enquiry number: GZ-1");
 assert.equal(widget.querySelector("form").hidden,true);
 assert.equal(queue.length,0);
+
+const suggestions = [
+	{ id: "products", label: "Explore shading" },
+	{ id: "quote", label: "Request a quote" },
+	{ id: "handoff", label: "Ask a specialist" },
+];
+const handoffReview = {
+	messages: [],
+	review: { purpose: "handoff", products: [], name: "Jana", email: "jana@example.com" },
+};
+queue.push(
+	["history", { messages: [], chips: suggestions }],
+	["msg", { messages: [], input: "text", question: "What is your name?" }, payload({ chip: "handoff" })],
+	["msg", { messages: [], input: "phone" }, payload({ text: "Jana" })],
+	["msg", handoffReview, payload({ text: "jana@example.com" })],
+	["submit", { lead_id: "GZ-2" }, payload({})],
+	["history", { messages: [], lead_id: "GZ-2" }],
+);
+widget = await mount();
+assert.match(widget.querySelector("p").textContent, /Gorbach žaluzie AI assistant/);
+assert.deepEqual(widget.querySelector("fieldset").children.map(node => node.textContent),
+	suggestions.map(({ label }) => label));
+await click(widget, "Ask a specialist");
+const contactInput = widget.querySelector("input");
+assert.equal(contactInput.focused, true);
+for (const text of ["Jana", "jana@example.com"]) {
+	contactInput.value = text;
+	widget.querySelector("form").onsubmit({ preventDefault() {} });
+	await setImmediate();
+	assert.equal(widget.querySelector(".error").textContent, "");
+	if (text === "Jana") assert.equal(contactInput.placeholder, "Phone or email");
+}
+assert.equal(widget.querySelector("form").hidden, true);
+assert.equal(widget.querySelector("fieldset").children[0].textContent, "Jana · jana@example.com");
+await click(widget, "Send to a specialist");
+assert.equal(widget.querySelector("fieldset").children[0].textContent, "Enquiry number: GZ-2");
+widget = await mount("uk");
+assert.match(widget.querySelector("p").textContent, /ШІ-асистент Gorbach žaluzie/);
+assert.equal(widget.querySelector("fieldset").children[0].textContent, "Номер заявки: GZ-2");
+assert.equal(widget.querySelector("form").hidden, true);
+assert.equal(queue.length, 0);
