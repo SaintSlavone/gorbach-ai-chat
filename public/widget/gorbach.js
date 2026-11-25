@@ -167,10 +167,11 @@
 
 	async function request(path, body, query) {
 		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), 26000);
+		const multipart = body instanceof FormData;
+		// Large uploads can outlast the conversational reply deadline.
+		const timer = multipart ? undefined : setTimeout(() => controller.abort(), 26000);
 		const url = new URL(path, api);
 		if (query) url.search = new URLSearchParams(query);
-		const multipart = body instanceof FormData;
 		let response;
 		let data;
 		try {
@@ -532,7 +533,12 @@
 				const result = await request("reset", { sid });
 				saveSession(result.sid);
 				ready = false;
-				input.value = "";
+				attachmentField = null;
+				survey.replaceChildren();
+				survey.hidden = true;
+				form.hidden = false;
+				localize(language);
+				clearConversation();
 				await restore();
 			} else {
 				clearConversation();

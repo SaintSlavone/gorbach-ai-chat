@@ -142,13 +142,17 @@ test("restores a localized questionnaire, uploads a file and submits the review"
 		["msg", { sid: "test", text: "jana@example.com" }, review],
 		["submit", { sid: "test" }, { lead_id: "GZ-2" }],
 		["history", null, screen({ lead_id: "GZ-2" })],
+		["reset", { sid: "test" }, { sid: "new" }],
+		["history", null, { error: "unavailable" }, 503],
+		["history", null, { lang: "uk", messages: [] }],
+		["msg", { sid: "new", text: "Про маркізи" }, { lang: "uk", messages: [] }],
 	];
 	const fetch = async (url, options) => {
 		if (url.pathname === "/api/status") {
 			assert.equal(url.searchParams.get("lang"), "uk");
 			return Response.json({ enabled: true, public: true });
 		}
-		const [route, payload, data] = calls.shift();
+		const [route, payload, data, status] = calls.shift();
 		assert.equal(url.pathname, `/api/${route}`);
 		if (payload) assert.deepEqual(JSON.parse(options.body), payload);
 		if (route === "file") {
@@ -156,8 +160,8 @@ test("restores a localized questionnaire, uploads a file and submits the review"
 			assert.equal(options.body.get("file").name, "window.pdf");
 			assert.equal(options.headers["Content-Type"], undefined);
 		}
-		if (route === "history") assert.equal(url.searchParams.get("sid"), "test");
-		return Response.json(data);
+		if (route === "history") assert.equal(url.searchParams.get("sid"), storage.get("gorbach-sid"));
+		return Response.json(data, { status });
 	};
 	async function openWidget() {
 		const widget = await mount(fetch, "/api", storage);
@@ -192,5 +196,12 @@ test("restores a localized questionnaire, uploads a file and submits the review"
 	widget = await openWidget();
 	assert.ok(control("Номер заявки: GZ-2"));
 	assert.equal(widget.querySelector("form").hidden, true);
+	await widget.querySelector(".reset").onclick();
+	assert.equal(widget.querySelector(".survey").hidden, true);
+	assert.equal(widget.querySelector("form").hidden, false);
+	assert.equal(widget.querySelector(".survey").children.length, 0);
+	assert.match(widget.querySelector(".error").textContent, /Не вдалося/);
+	widget.querySelector("input").value = "Про маркізи";
+	await widget.querySelector("form").onsubmit({ preventDefault() {} });
 	assert.equal(calls.length, 0);
 });
