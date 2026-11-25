@@ -8,7 +8,8 @@ checked-in script with styles scoped to a Shadow DOM. No build step is needed.
 - The stand backend supplies the live chat API and Gemini integration.
 - `tests/` covers the widget contract and the local demo HTTP routes.
 
-The browser sends only the latest question and up to 12 recent messages with each
-request. The transcript lives in memory until reset or page unload. The widget uses
-the host page language for its controls, and displays visitor and assistant messages
-as plain text.
+The `/api/cbot/` mode sends the latest question and up to 12 recent messages. This
+transcript lives in memory until reset or page unload. The `/api/` mode restores the
+stand's session and renders its questionnaire, attachments, lead review, and receipt.
+The widget displays visitor and assistant messages as plain text. The controls use the
+page language unless the stand supplies a conversation language.
