@@ -10,6 +10,6 @@ Commit after each completed logical unit (page scaffold, function, style block)
 
 Message style: short lowercase imperative — "projects page init", "open project function"
 
-Run npm run build before committing; never commit a broken build
+Run `node --check public/widget/gorbach.js`, `node --test --test-isolation=none tests/widget.test.mjs`, and `python -m unittest discover -s tests` before committing.
 
 Push only when I explicitly say "push"
